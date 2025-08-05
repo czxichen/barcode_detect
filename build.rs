@@ -3,12 +3,12 @@ fn main() {
 
     let mut ncnn_path = std::env::var("NCNN_SOURCE_DIR").unwrap_or_default();
     if ncnn_path.is_empty() {
-        ncnn_path = "/tmp/ncnn".to_string();
+        ncnn_path = "third_party/ncnn".to_string();
     }
 
     let mut zxing_path = std::env::var("ZXING_SOURCE_DIR").unwrap_or_default();
     if zxing_path.is_empty() {
-        zxing_path = "/tmp/zxing-cpp".to_string();
+        zxing_path = "third_party/zxing-cpp".to_string();
     }
 
     build(&ncnn_path, &zxing_path);

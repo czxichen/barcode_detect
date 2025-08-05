@@ -51,6 +51,13 @@
     "unordered_map": "cpp",
     "variant": "cpp",
     "__config": "cpp",
-    "charconv": "cpp"
+    "charconv": "cpp",
+    "__tree": "cpp",
+    "csignal": "cpp",
+    "forward_list": "cpp",
+    "map": "cpp",
+    "set": "cpp",
+    "typeindex": "cpp",
+    "unordered_set": "cpp"
   }
 }

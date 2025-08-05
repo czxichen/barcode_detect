@@ -79,7 +79,6 @@ unsafe extern "C" {
         img_p: *const u8,
         width: c_int,
         height: c_int,
-        format_enum: c_int,
         detections: *const Detection,
         detections_size: c_int,
     ) -> DecodeResultList;
@@ -148,12 +147,15 @@ pub fn scan(
     detections: &[Detection],
 ) -> Result<Vec<DetectionResult>, String> {
     let mut ret = Vec::new();
+    if detections.is_empty() {
+        return Ok(ret);
+    }
+
     unsafe {
         let decodes = decode_detections(
             ptr.as_ptr(),
             width as c_int,
             height as c_int,
-            0x03000102, // RGB
             detections.as_ptr(),
             detections.len() as c_int,
         );

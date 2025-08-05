@@ -61,15 +61,14 @@ std::vector<Decode> DecodeBarcodesInDetections(
         }
 
         ZXing::ImageView crop = img.cropped(box.box.x, box.box.y, box.box.width, box.box.height);
-
         const ZXing::ReaderOptions *current_options = nullptr;
         if (box.class_id == 0)
         {
-            current_options = &qrcode_options;
+            current_options = &barcode_options;
         }
         else if (box.class_id == 1)
         {
-            current_options = &barcode_options;
+            current_options = &qrcode_options;
         }
         else
         {
@@ -470,15 +469,13 @@ extern "C"
         }
     }
 
-    DecodeResultList decode_detections(const unsigned char *data, int width, int height, int format_enum, const Detection *detections, int detections_size)
+    DecodeResultList decode_detections(const unsigned char *data, int width, int height, const Detection *detections, int detections_size)
     {
-        ZXing::ImageFormat format = static_cast<ZXing::ImageFormat>(format_enum);
-
         std::vector<Detection> boxes(detections, detections + detections_size);
-
-        std::vector<Decode> decodes = DecodeBarcodesInDetections(data, width, height, format, boxes);
+        std::vector<Decode> decodes = DecodeBarcodesInDetections(data, width, height, ZXing::ImageFormat::RGB, boxes);
 
         DecodeResultList result;
+        result.results = nullptr;
         result.count = decodes.size();
         if (result.count == 0)
         {

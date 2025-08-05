@@ -1,7 +1,6 @@
 #![allow(unused)]
 
-use std::ffi::{c_int, c_void};
-use zxingcpp::{Barcode, BarcodeFormat};
+use std::ffi::{CStr, CString, c_int, c_void};
 
 const BMEM: &[u8] = include_bytes!("../model/scanner.ncnn.bin");
 const PMEM: &[u8] = include_bytes!("../model/scanner.ncnn.param");
@@ -33,6 +32,24 @@ impl Detection {
     }
 }
 
+#[derive(Debug, Clone)]
+#[repr(C)]
+struct DecodeResult {
+    pub class_id: c_int,
+    pub x: c_int,
+    pub y: c_int,
+    pub w: c_int,
+    pub h: c_int,
+    text: *const i8,
+}
+
+#[derive(Debug, Clone)]
+#[repr(C)]
+struct DecodeResultList {
+    results: *const DecodeResult,
+    count: c_int,
+}
+
 #[allow(unused)]
 unsafe extern "C" {
     fn create_detector(param: *const i8, bin: *const u8) -> *const c_void;
@@ -57,6 +74,17 @@ unsafe extern "C" {
     ) -> *const Detection;
 
     fn detect_result_free(ret: *const Detection);
+
+    fn decode_detections(
+        img_p: *const u8,
+        width: c_int,
+        height: c_int,
+        format_enum: c_int,
+        detections: *const Detection,
+        detections_size: c_int,
+    ) -> DecodeResultList;
+
+    fn decode_result_free(result_list: *const DecodeResultList);
 }
 
 pub struct Detect {
@@ -104,10 +132,10 @@ impl Drop for Detect {
 
 #[derive(Debug, serde::Deserialize, serde::Serialize)]
 pub struct DetectionResult {
-    pub l: i32,
-    pub r: i32,
-    pub t: i32,
-    pub b: i32,
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
     pub class: i32,
     pub codes: String,
 }
@@ -119,55 +147,34 @@ pub fn scan(
     height: u32,
     detections: &[Detection],
 ) -> Result<Vec<DetectionResult>, String> {
-    let view = zxingcpp::ImageView::from_slice(ptr, width, height, zxingcpp::ImageFormat::RGB)
-        .map_err(|err| err.to_string())?;
+    let mut ret = Vec::new();
+    unsafe {
+        let decodes = decode_detections(
+            ptr.as_ptr(),
+            width as c_int,
+            height as c_int,
+            0x03000102, // RGB
+            detections.as_ptr(),
+            detections.len() as c_int,
+        );
 
-    let qrcode = zxingcpp::read()
-        .formats(BarcodeFormat::MatrixCodes)
-        .try_invert(false);
-
-    let barcode = zxingcpp::read()
-        .formats(BarcodeFormat::LinearCodes)
-        .try_invert(false);
-
-    let mut ret = Vec::with_capacity(detections.len());
-    for detection in detections {
-        let codes = match detection.class_id {
-            0 => barcode
-                .from(view.clone().cropped(
-                    detection.rect.x,
-                    detection.rect.y,
-                    detection.rect.w,
-                    detection.rect.h,
-                ))
-                .unwrap_or(Vec::new()),
-            1 => qrcode
-                .from(view.clone().cropped(
-                    detection.rect.x,
-                    detection.rect.y,
-                    detection.rect.w,
-                    detection.rect.h,
-                ))
-                .unwrap_or(Vec::new()),
-            _ => continue,
-        };
-
-        if codes.is_empty() {
-            continue;
+        if decodes.count == 0 || decodes.results.is_null() {
+            decode_result_free(&decodes);
+            return Ok(ret);
         }
 
-        for code in codes {
-            let pos = code.position();
+        for decode in std::slice::from_raw_parts(decodes.results, decodes.count as usize) {
             ret.push(DetectionResult {
-                t: pos.top_left.y.min(pos.top_right.y) + detection.rect.y as i32,
-                b: pos.bottom_left.y.max(pos.bottom_right.y) + detection.rect.y as i32,
-                l: pos.top_left.x.min(pos.top_left.x) + detection.rect.x as i32,
-                r: pos.bottom_right.x.max(pos.top_right.x) + detection.rect.x as i32,
-                class: detection.class_id,
-                codes: code.text(),
+                x: decode.x,
+                y: decode.y,
+                w: decode.w,
+                h: decode.h,
+                class: decode.class_id,
+                codes: CStr::from_ptr(decode.text).to_string_lossy().to_string(),
             });
         }
-    }
+        decode_result_free(&decodes);
+    };
     return Ok(ret);
 }
 

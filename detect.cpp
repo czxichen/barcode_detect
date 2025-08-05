@@ -8,6 +8,9 @@
 #include <fstream>
 #include "net.h"
 #include "simpleocv.h"
+#include "ImageView.h"
+#include "ReadBarcode.h"
+#include "BarcodeFormat.h"
 
 const int NUM_CLASSES = 2;
 const int INPUT_IMG_SIZE = 416;
@@ -19,6 +22,73 @@ struct Detection
     float score;
     int class_id;
 };
+
+struct Decode
+{
+    Detection detect;
+    ZXing::Barcode barcode;
+};
+
+std::vector<Decode> DecodeBarcodesInDetections(
+    const uint8_t *data, int width, int height, ZXing::ImageFormat format,
+    const std::vector<Detection> &boxes)
+{
+    ZXing::ReaderOptions qrcode_options;
+    qrcode_options.setFormats(ZXing::BarcodeFormat::MatrixCodes)
+        .setTryInvert(false)
+        .setMaxNumberOfSymbols(3);
+
+    ZXing::ReaderOptions barcode_options;
+    barcode_options.setFormats(ZXing::BarcodeFormat::LinearCodes)
+        .setTryInvert(false)
+        .setMaxNumberOfSymbols(3);
+
+    std::vector<Decode> result;
+    if (boxes.empty() || data == nullptr)
+    {
+        return result;
+    }
+
+    ZXing::ImageView img(data, width, height, format);
+
+    for (const auto &box : boxes)
+    {
+        if (box.box.x < 0 || box.box.y < 0 ||
+            box.box.x + box.box.width > width ||
+            box.box.y + box.box.height > height)
+        {
+            continue;
+        }
+
+        ZXing::ImageView crop = img.cropped(box.box.x, box.box.y, box.box.width, box.box.height);
+
+        const ZXing::ReaderOptions *current_options = nullptr;
+        if (box.class_id == 0)
+        {
+            current_options = &qrcode_options;
+        }
+        else if (box.class_id == 1)
+        {
+            current_options = &barcode_options;
+        }
+        else
+        {
+            continue;
+        }
+
+        auto barcodes = ZXing::ReadBarcodes(crop, *current_options);
+
+        for (const auto &barcode : barcodes)
+        {
+            Decode decode;
+            decode.detect = box;
+            decode.barcode = barcode;
+            result.push_back(decode);
+        }
+    }
+
+    return result;
+}
 
 /**
  * @brief 将源图像(src)复制到目标图像(dest)的指定区域(ROI)
@@ -257,6 +327,22 @@ void post_process(const ncnn::Mat &output, std::vector<Detection> &detections, i
 extern "C"
 {
     typedef void *DetectorHandle;
+    typedef struct
+    {
+        int class_id;
+        int x;
+        int y;
+        int width;
+        int height;
+        char *text;
+    } DecodeResult;
+
+    typedef struct
+    {
+        DecodeResult *results;
+        int count;
+    } DecodeResultList;
+
     DetectorHandle create_detector(const char *param_mem, const unsigned char *bin_mem)
     {
         ncnn::Net *net = new ncnn::Net();
@@ -382,5 +468,60 @@ extern "C"
         {
             delete[] detections;
         }
+    }
+
+    DecodeResultList decode_detections(const unsigned char *data, int width, int height, int format_enum, const Detection *detections, int detections_size)
+    {
+        ZXing::ImageFormat format = static_cast<ZXing::ImageFormat>(format_enum);
+
+        std::vector<Detection> boxes(detections, detections + detections_size);
+
+        std::vector<Decode> decodes = DecodeBarcodesInDetections(data, width, height, format, boxes);
+
+        DecodeResultList result;
+        result.count = decodes.size();
+        if (result.count == 0)
+        {
+            return result;
+        }
+
+        result.results = new DecodeResult[result.count];
+
+        for (int i = 0; i < result.count; ++i)
+        {
+            const auto &decode = decodes[i];
+            DecodeResult &c_result = result.results[i];
+
+            auto pos = decode.barcode.position();
+            c_result.x = pos.topLeft().x;
+            c_result.y = pos.topLeft().y;
+            c_result.width = pos.topRight().x - pos.topLeft().x;
+            c_result.height = pos.bottomLeft().y - pos.topLeft().y;
+
+            c_result.class_id = static_cast<int>(decode.barcode.format());
+            const std::string &text_str = decode.barcode.text();
+            c_result.text = new char[text_str.length() + 1];
+            strcpy(c_result.text, text_str.c_str());
+        }
+
+        return result;
+    }
+
+    void decode_result_free(DecodeResultList *result_list)
+    {
+        if (result_list == nullptr || result_list->results == nullptr)
+        {
+            return;
+        }
+
+        for (int i = 0; i < result_list->count; ++i)
+        {
+            delete[] result_list->results[i].text;
+        }
+
+        delete[] result_list->results;
+
+        result_list->results = nullptr;
+        result_list->count = 0;
     }
 }

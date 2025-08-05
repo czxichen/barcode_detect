@@ -1,12 +1,17 @@
 fn main() {
     println!("cargo:rerun-if-env-changed=detect.cpp");
 
-    let ncnn_path = std::env::var("NCNN_PATH").unwrap_or_default();
+    let mut ncnn_path = std::env::var("NCNN_SOURCE_DIR").unwrap_or_default();
     if ncnn_path.is_empty() {
-        panic!("ncnn path is empty")
+        ncnn_path = "/tmp/ncnn".to_string();
     }
 
-    build_ncnn(&ncnn_path);
+    let mut zxing_path = std::env::var("ZXING_SOURCE_DIR").unwrap_or_default();
+    if zxing_path.is_empty() {
+        zxing_path = "/tmp/zxing-cpp".to_string();
+    }
+
+    build(&ncnn_path, &zxing_path);
 
     println!("cargo:rustc-link-lib=static=ncnn");
     println!("cargo:rustc-link-lib=static=detect");
@@ -14,9 +19,10 @@ fn main() {
 }
 
 #[cfg(target_os = "macos")]
-fn build_ncnn(path: &str) {
+fn build(ncnn: &str, zxing: &str) {
     let path = cmake::Config::new(".")
-        .define("NCNN_SOURCE_DIR", path)
+        .define("NCNN_SOURCE_DIR", ncnn)
+        .define("ZXING_SOURCE_DIR", zxing)
         .define("CMAKE_OSX_DEPLOYMENT_TARGET", "11.0")
         .profile("Release")
         .build();
@@ -25,7 +31,7 @@ fn build_ncnn(path: &str) {
 }
 
 #[cfg(target_os = "android")]
-fn build_ncnn(path: &str) {
+fn build(path: &str) {
     let arch = match target.as_str() {
         "i686-linux-android" => "x86",
         "x86_64-linux-android" => "x86_64",

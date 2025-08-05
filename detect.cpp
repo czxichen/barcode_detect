@@ -6,11 +6,11 @@
 #include <algorithm>
 #include <cmath>
 #include <fstream>
-#include "net.h"
-#include "simpleocv.h"
-#include "ImageView.h"
-#include "ReadBarcode.h"
-#include "BarcodeFormat.h"
+#include "ncnn/net.h"
+#include "ncnn/simpleocv.h"
+#include "ZXing/ImageView.h"
+#include "ZXing/ReadBarcode.h"
+#include "ZXing/BarcodeFormat.h"
 
 const int NUM_CLASSES = 2;
 const int INPUT_IMG_SIZE = 416;

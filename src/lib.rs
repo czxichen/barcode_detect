@@ -170,7 +170,9 @@ pub fn scan(
                 w: decode.w,
                 h: decode.h,
                 class: decode.class_id,
-                codes: CStr::from_ptr(decode.text).to_string_lossy().to_string(),
+                codes: CStr::from_ptr(decode.text as *const _)
+                    .to_string_lossy()
+                    .to_string(),
             });
         }
         decode_result_free(&decodes);

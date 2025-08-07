@@ -4,7 +4,7 @@ fn main() {
     const SIZE: u32 = 640;
     let mut detect = qbarcode_scanner::Detect::new();
 
-    let src = image::open("examples/IMG_3105.jpg").unwrap();
+    let src = image::open("examples/IMG_3116.jpg").unwrap();
     let ss = src
         .resize(SIZE, SIZE, image::imageops::FilterType::Lanczos3)
         .to_rgb8();
@@ -15,7 +15,7 @@ fn main() {
     let raw = input.to_vec();
 
     let now = std::time::SystemTime::now();
-    let ds = detect.detect_with_pixels(raw.as_slice(), SIZE, 0.25);
+    let ds = detect.detect_with_pixels(raw.as_slice(), SIZE, 0.2);
 
     for d in ds.iter().enumerate() {
         println!("{:?}", d);

@@ -2,8 +2,8 @@
 
 use std::ffi::{CStr, CString, c_int, c_void};
 
-const BMEM: &[u8] = include_bytes!("../model/scanner.ncnn.bin");
-const PMEM: &[u8] = include_bytes!("../model/scanner.ncnn.param");
+const BMEM: &[u8] = include_bytes!("../model/scannetv2_nano.ncnn.bin");
+const PMEM: &[u8] = include_bytes!("../model/scannetv2_nano.ncnn.param");
 const CLASSES: [&str; 2] = ["barcode", "qrcode"];
 
 #[derive(Debug, Clone)]
@@ -89,6 +89,8 @@ unsafe extern "C" {
 pub struct Detect {
     handle: *const c_void,
 }
+
+unsafe impl Send for Detect {}
 
 impl Detect {
     pub fn new() -> Self {

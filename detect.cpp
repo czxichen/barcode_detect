@@ -489,11 +489,10 @@ extern "C"
             const auto &decode = decodes[i];
             DecodeResult &c_result = result.results[i];
 
-            auto pos = decode.barcode.position();
-            c_result.x = pos.topLeft().x;
-            c_result.y = pos.topLeft().y;
-            c_result.width = pos.topRight().x - pos.topLeft().x;
-            c_result.height = pos.bottomLeft().y - pos.topLeft().y;
+            c_result.x = decode.detect.box.x;
+            c_result.y = decode.detect.box.y;
+            c_result.width = decode.detect.box.width;
+            c_result.height = decode.detect.box.height;
 
             c_result.class_id = static_cast<int>(decode.barcode.format());
             const std::string &text_str = decode.barcode.text();

@@ -13,8 +13,7 @@
 #include "ZXing/BarcodeFormat.h"
 
 const int NUM_CLASSES = 2;
-const int INPUT_IMG_SIZE = 416;
-const float NMS_THRESHOLD = 0.5f;
+const float NMS_THRESHOLD = 0.45f;
 
 struct Detection
 {
@@ -215,7 +214,7 @@ void NMSBoxes(
     }
 }
 
-void post_process(const ncnn::Mat &output, std::vector<Detection> &detections, int img_w, int img_h, float score_threshold)
+void post_process(const ncnn::Mat &output, std::vector<Detection> &detections, int img_w, int img_h, float score_threshold, float nms_threshold, int input_size)
 {
     if (output.empty())
     {
@@ -229,8 +228,8 @@ void post_process(const ncnn::Mat &output, std::vector<Detection> &detections, i
 
     for (const auto &stride : strides)
     {
-        int feat_w = INPUT_IMG_SIZE / stride;
-        int feat_h = INPUT_IMG_SIZE / stride;
+        int feat_w = input_size / stride;
+        int feat_h = input_size / stride;
         for (int y = 0; y < feat_h; ++y)
         {
             for (int x = 0; x < feat_w; ++x)
@@ -293,14 +292,14 @@ void post_process(const ncnn::Mat &output, std::vector<Detection> &detections, i
         scores.push_back(det.score);
     }
 
-    NMSBoxes(boxes, scores, score_threshold, NMS_THRESHOLD, indices);
+    NMSBoxes(boxes, scores, score_threshold, nms_threshold, indices);
 
     // 根据原始图像letterbox的padding计算缩放
-    float r = std::min(static_cast<float>(INPUT_IMG_SIZE) / img_w, static_cast<float>(INPUT_IMG_SIZE) / img_h);
+    float r = std::min(static_cast<float>(input_size) / img_w, static_cast<float>(input_size) / img_h);
     int new_w = static_cast<int>(img_w * r);
     int new_h = static_cast<int>(img_h * r);
-    int pad_w = (INPUT_IMG_SIZE - new_w) / 2;
-    int pad_h = (INPUT_IMG_SIZE - new_h) / 2;
+    int pad_w = (input_size - new_w) / 2;
+    int pad_h = (input_size - new_h) / 2;
 
     for (int idx : indices)
     {
@@ -325,7 +324,12 @@ void post_process(const ncnn::Mat &output, std::vector<Detection> &detections, i
 
 extern "C"
 {
-    typedef void *DetectorHandle;
+    typedef struct
+    {
+        ncnn::Net *net;
+        int input_size;
+    } DetectorHandle;
+
     typedef struct
     {
         int class_id;
@@ -342,35 +346,38 @@ extern "C"
         int count;
     } DecodeResultList;
 
-    DetectorHandle create_detector(const char *param_mem, const unsigned char *bin_mem)
+    DetectorHandle create_detector(const char *param_mem, const unsigned char *bin_mem, int input_size)
     {
+        DetectorHandle handle;
         ncnn::Net *net = new ncnn::Net();
         if (net->load_param_mem(param_mem) != 0)
         {
             delete net;
-            return nullptr;
+            return handle;
         }
 
         if (net->load_model(bin_mem) == 0)
         {
             delete net;
-            return nullptr;
+            return handle;
         }
-
-        return static_cast<DetectorHandle>(net);
+        handle.net = net;
+        handle.input_size = input_size;
+        return handle;
     }
-    void destroy_detector(DetectorHandle handle)
+
+    void destroy_detector(DetectorHandle *handle)
     {
-        if (handle)
+        if (handle->net)
         {
-            ncnn::Net *net = static_cast<ncnn::Net *>(handle);
-            delete net;
+            delete handle->net;
+            handle->net = nullptr;
         }
     }
 
     // 检测置信度阈值
     // const float CONF_THRESHOLD = 0.25f;
-    Detection *detect(DetectorHandle handle, const uchar *original_img_ptr, size_t original_img_size, float score_threshold, int *out_detections_count)
+    Detection *detect(DetectorHandle *const handle, const uchar *original_img_ptr, size_t original_img_size, float score_threshold, float nms_threshold, int *out_detections_count)
     {
         std::vector<uchar> buffer;
         buffer.assign(original_img_ptr, original_img_ptr + original_img_size);
@@ -380,35 +387,33 @@ extern "C"
         int img_w = original_img.cols;
         int img_h = original_img.rows;
 
-        float r = std::min(static_cast<float>(INPUT_IMG_SIZE) / img_w, static_cast<float>(INPUT_IMG_SIZE) / img_h);
+        float r = std::min(static_cast<float>(handle->input_size) / img_w, static_cast<float>(handle->input_size) / img_h);
         int new_w = static_cast<int>(img_w * r);
         int new_h = static_cast<int>(img_h * r);
 
         cv::Mat resized_img;
         cv::resize(original_img, resized_img, cv::Size(new_w, new_h), 0, 0, 0);
 
-        cv::Mat input_img(INPUT_IMG_SIZE, INPUT_IMG_SIZE, CV_8UC3);
-        int pad_w = (INPUT_IMG_SIZE - new_w) / 2;
-        int pad_h = (INPUT_IMG_SIZE - new_h) / 2;
+        cv::Mat input_img(handle->input_size, handle->input_size, CV_8UC3);
+        int pad_w = (handle->input_size - new_w) / 2;
+        int pad_h = (handle->input_size - new_h) / 2;
 
         copy_to_roi(resized_img, input_img, pad_w, pad_h);
 
-        ncnn::Mat in = ncnn::Mat::from_pixels(input_img.data, ncnn::Mat::PIXEL_BGR2RGB, INPUT_IMG_SIZE, INPUT_IMG_SIZE);
+        ncnn::Mat in = ncnn::Mat::from_pixels(input_img.data, ncnn::Mat::PIXEL_BGR2RGB, handle->input_size, handle->input_size);
 
         const float norm_vals[3] = {1 / 255.f, 1 / 255.f, 1 / 255.f};
         const float mean_vals[3] = {0, 0, 0};
         in.substract_mean_normalize(mean_vals, norm_vals);
 
-        ncnn::Net *net = static_cast<ncnn::Net *>(handle);
-
-        ncnn::Extractor ex = net->create_extractor();
+        ncnn::Extractor ex = handle->net->create_extractor();
         ex.input("in0", in);
 
         ncnn::Mat out;
         ex.extract("out0", out);
 
         std::vector<Detection> detections;
-        post_process(out, detections, img_w, img_h, score_threshold);
+        post_process(out, detections, img_w, img_h, score_threshold, nms_threshold, handle->input_size);
 
         *out_detections_count = detections.size();
 
@@ -426,24 +431,22 @@ extern "C"
         return result_arr;
     }
 
-    Detection *detect_with_pixels(DetectorHandle handle, const uchar *original_img_ptr, int img_s, float score_threshold, int *out_detections_count)
+    Detection *detect_with_pixels(DetectorHandle *const handle, const uchar *original_img_ptr, int img_s, float score_threshold, float nms_threshold, int *out_detections_count)
     {
-        ncnn::Mat in = in.from_pixels_resize(original_img_ptr, ncnn::Mat::PIXEL_RGB, img_s, img_s, INPUT_IMG_SIZE, INPUT_IMG_SIZE);
+        ncnn::Mat in = in.from_pixels_resize(original_img_ptr, ncnn::Mat::PIXEL_RGB, img_s, img_s, handle->input_size, handle->input_size);
 
         const float norm_vals[3] = {1 / 255.f, 1 / 255.f, 1 / 255.f};
         const float mean_vals[3] = {0, 0, 0};
         in.substract_mean_normalize(mean_vals, norm_vals);
 
-        ncnn::Net *net = static_cast<ncnn::Net *>(handle);
-
-        ncnn::Extractor ex = net->create_extractor();
+        ncnn::Extractor ex = handle->net->create_extractor();
         ex.input("in0", in);
 
         ncnn::Mat out;
         ex.extract("out0", out);
 
         std::vector<Detection> detections;
-        post_process(out, detections, img_s, img_s, score_threshold);
+        post_process(out, detections, img_s, img_s, score_threshold, nms_threshold, handle->input_size);
 
         *out_detections_count = detections.size();
 

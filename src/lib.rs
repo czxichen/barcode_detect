@@ -2,8 +2,8 @@
 
 use std::ffi::{CStr, CString, c_int, c_void};
 
-const BMEM: &[u8] = include_bytes!("../model/scannetv2_nano.ncnn.bin");
-const PMEM: &[u8] = include_bytes!("../model/scannetv2_nano.ncnn.param");
+const BMEM: &[u8] = include_bytes!("../model/scannetv2_640.ncnn.bin");
+const PMEM: &[u8] = include_bytes!("../model/scannetv2_640.ncnn.param");
 const CLASSES: [&str; 2] = ["barcode", "qrcode"];
 
 #[derive(Debug, Clone)]
@@ -50,26 +50,34 @@ struct DecodeResultList {
     count: c_int,
 }
 
+#[repr(C)]
+pub struct DetectNet {
+    net: *const c_void,
+    input_size: c_int,
+}
+
 #[allow(unused)]
 unsafe extern "C" {
-    fn create_detector(param: *const i8, bin: *const u8) -> *const c_void;
+    fn create_detector(param: *const i8, bin: *const u8, input_size: c_int) -> DetectNet;
 
-    fn destroy_detector(net: *const c_void);
+    fn destroy_detector(net: *mut DetectNet);
 
     fn detect(
-        handle: *const c_void,
+        net: *const DetectNet,
         img_p: *const u8,
         img_s: u32,
-        threshold: f32,
+        score_threshold: f32,
+        nms_threshold: f32,
         out: *mut c_int,
     ) -> *const Detection;
 
     // img_p: rgb 数据指针必须是正方形图片
     fn detect_with_pixels(
-        handle: *const c_void,
+        net: *const DetectNet,
         img_p: *const u8,
         img_s: c_int,
-        threshold: f32,
+        score_threshold: f32,
+        nms_threshold: f32,
         out: *mut c_int,
     ) -> *const Detection;
 
@@ -86,24 +94,32 @@ unsafe extern "C" {
     fn decode_result_free(result_list: *const DecodeResultList);
 }
 
-pub struct Detect {
-    handle: *const c_void,
-}
+unsafe impl Send for DetectNet {}
+unsafe impl Sync for DetectNet {}
 
-unsafe impl Send for Detect {}
-
-impl Detect {
-    pub fn new() -> Self {
-        return Detect {
-            handle: unsafe {
-                create_detector(PMEM.as_ptr() as *const _, BMEM.as_ptr() as *const _)
-            },
+impl DetectNet {
+    pub fn new(input_size: u32) -> Self {
+        return unsafe {
+            create_detector(
+                PMEM.as_ptr() as *const _,
+                BMEM.as_ptr() as *const _,
+                input_size as c_int,
+            )
         };
     }
 
-    pub fn detect(&mut self, img: &[u8], th: f32) -> Vec<Detection> {
+    pub fn detect(&self, img: &[u8], s_threshold: f32, n_threshold: f32) -> Vec<Detection> {
         let mut out = 0i32;
-        let ret = unsafe { detect(self.handle, img.as_ptr(), img.len() as u32, th, &mut out) };
+        let ret = unsafe {
+            detect(
+                self as *const DetectNet,
+                img.as_ptr(),
+                img.len() as u32,
+                s_threshold,
+                n_threshold,
+                &mut out,
+            )
+        };
         if out == 0 {
             return Vec::new();
         }
@@ -112,10 +128,24 @@ impl Detect {
         return detections;
     }
 
-    pub fn detect_with_pixels(&mut self, img: &[u8], img_s: u32, th: f32) -> Vec<Detection> {
+    pub fn detect_with_pixels(
+        &self,
+        img: &[u8],
+        img_s: u32,
+        s_threshold: f32,
+        n_threshold: f32,
+    ) -> Vec<Detection> {
         let mut out = 0i32;
-        let ret =
-            unsafe { detect_with_pixels(self.handle, img.as_ptr(), img_s as c_int, th, &mut out) };
+        let ret = unsafe {
+            detect_with_pixels(
+                self,
+                img.as_ptr(),
+                img_s as c_int,
+                s_threshold,
+                n_threshold,
+                &mut out,
+            )
+        };
         if out == 0 {
             return Vec::new();
         }
@@ -125,9 +155,9 @@ impl Detect {
     }
 }
 
-impl Drop for Detect {
+impl Drop for DetectNet {
     fn drop(&mut self) {
-        unsafe { destroy_detector(self.handle) };
+        unsafe { destroy_detector(self as *mut DetectNet) };
     }
 }
 
